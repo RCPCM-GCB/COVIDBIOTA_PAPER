@@ -1,1 +1,1 @@
-# COVIDBIOTA_PAPER
+code to reproduce analysis from the paper "Microbial communities of the upper respiratory tract in mild and severe COVID-19 patients: a possible link with the disease course]{Microbial communities of the upper respiratory tract in mild and severe COVID-19 patients: a possible link with the disease course"
