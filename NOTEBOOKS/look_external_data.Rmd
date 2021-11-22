@@ -1,0 +1,32 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+phylo_obj <-  read_rds('../../DATA/ps_deblur_tree_fhm_spain.rds')
+meta = data.frame(sample_data(phylo_obj))
+
+respirotype_df = read.delim("../../RESULTS/mgx_cluster_deblur_genus_narmT_prev0.1det5_6.tsv", sep = " ")
+colnames(respirotype_df) = c("mgx_specimen", "respirotype")
+
+meta_and_type = merge(meta, respirotype_df, by = "mgx_specimen")
+
+```
+```{r}
+spain_meta = subset(meta_and_type, meta_and_type$dataset=="covid_Spain")
+spain_meta$respirotype
+spain_severity_type = dcast(spain_meta,Severity ~ respirotype)
+rownames(spain_severity_type) = spain_severity_type$Severity
+spain_severity_type = spain_severity_type[,-1]
+spain_severity_type = as.matrix(spain_severity_type)
+spain_severity_type
+
+fisher.test(spain_severity_type)
+
+
+```
+```{r}
+pheatmap(spain_severity_type, main = "spanish", fontsize = 22)
+```
+

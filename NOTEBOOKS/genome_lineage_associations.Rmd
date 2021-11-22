@@ -1,0 +1,96 @@
+---
+title: "Associations between genome lineage and other factors"
+output: html_notebook
+---
+
+### Get the data
+```{r}
+pangolin = read.delim("../../DATA/genomes//lineage_report.csv", sep = ",")
+meta16s = read.delim("../../METADATA/metadata_eng.tsv")
+meta16s$sample = rownames(meta16s)
+pangolin = subset(pangolin, pangolin$status == "passed_qc")
+pangolin = pangolin[,c("sample","lineage")]
+meta = merge(meta16s, pangolin, by = "sample", all.x = T)
+write.table(meta,"../../METADATA/metadata_with_pangolin.tsv", sep = "\t", row.names = F)
+```
+
+
+### Association between City and Lineage, Fisher test
+```{r}
+library("reshape2")
+lin_city_long = data.frame(lineage = meta$lineage, city = meta$city)
+lin_city_wide = dcast(lin_city_long, city ~ lineage)
+rownames(lin_city_wide) = lin_city_wide$city
+lin_city_wide = lin_city_wide[,-1]
+fisher.test(lin_city_wide, simulate.p.value=TRUE, B=1e5)
+```
+### Visualize associations of sample linage with city of sampling
+
+```{r } 
+library("pheatmap")
+pheatmap(log(1+lin_city_wide), scale="row")
+```
+
+### Stat test for major city-specific lineages 
+```{r}
+lin_city_wide[c("Kazan","Moscow"),c("B.1.1","B.1.1.294")]
+## change fisher to sum-x
+fisher.test(lin_city_wide[c("Kazan","Moscow"),c("B.1.1","B.1.1.294")])
+fisher.test(lin_city_wide[c("Irkutsk","Moscow"),c("B.1.1","B.1.1.141")])
+fisher.test(lin_city_wide[c("NNovgorod","Moscow"),c("B.1.1","B.1.1.317")])
+```
+
+### Look if the association between city and lineage is due to sample collection date
+```{r  }
+lin_city_long = data.frame(lineage = meta$lineage, city = meta$city, date = meta$date)
+#lin_city_long$date = substr(lin_city_long$date, 1,7)
+lin_city_long = lin_city_long[order(lin_city_long$date),]
+lin_city_long = subset(lin_city_long, str_length(lin_city_long$date) == 10)
+
+png("../../RESULTS/days_of_lineages.png",type = "cairo", width = 1500, height = 1000);ggplot() + geom_point(aes(x = date, y = lineage,colour = city),data=lin_city_long,size=5) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1,size = 16), text = element_text(size = 19),legend.text=element_text(size=25),title=element_text(size=45),axis.text.y = element_text(size=20));dev.off()
+
+ggplot() + geom_point(aes(x = date, y = lineage,colour = city),data=lin_city_long,size=2) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+
+## Association between lung damage and virus lineage, linear model
+### simple model
+```{r}
+model = lm("damage ~ lineage", meta)
+summary(model)
+```
+### model with comorbidities and other data
+```{r}
+model = lm("damage ~ age + sex + obesity + diabetes + smoking + hypertension + hobl + coronary_artery_disease + chronic_heart_failure + lineage", meta)
+summary(model)
+```
+
+
+### association of community type and virus lineage
+```{r}
+pangolin = read.delim("../../DATA/genomes//lineage_report.csv", sep = ",")
+
+meta16s = read.delim("../../METADATA/metadata_eng.tsv")
+meta16s$sample = rownames(meta16s)
+pangolin = subset(pangolin, pangolin$status == "passed_qc")
+pangolin = pangolin[,c("sample","lineage")]
+meta16s = merge(meta16s, pangolin, by = "sample", all.x = T)
+meta16s$lineage
+```
+
+```{r}
+metaall=merge(meta,meta16s, by = "mgx_specimen")
+nrow(metaall)
+
+lincom = dcast(metaall, "lineage ~ communityType")
+lincom = lincom[complete.cases(lincom),]
+nrow(lincom)
+rownames(lincom) = lincom$lineage
+lincom=lincom[,-1]
+fisher.test(lincom,simulate.p.value=TRUE)
+
+```
+```{r}
+pheatmap(lincom)
+
+```
+

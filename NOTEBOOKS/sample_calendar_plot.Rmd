@@ -1,0 +1,51 @@
+---
+title: "Find associations with respirotype and disease severity"
+output: html_notebook
+---
+
+### get the data
+```{r}
+pangolin = read.delim("../../DATA/genomes//lineage_report.csv", sep = ",")
+meta16s = read.delim("../../METADATA/metadata_eng.tsv")
+meta16s$sample = rownames(meta16s)
+pangolin = subset(pangolin, pangolin$status == "passed_qc")
+pangolin = pangolin[,c("sample","lineage")]
+meta = merge(meta16s, pangolin, by = "sample", all.x = T)
+
+write.table(meta[,-1], "../../METADATA//metadata_eng_lineage.tsv", sep ="\t",quote = F)
+
+covid_ru = read.delim("../../DATA/COVID_Yandex.csv")
+colnames(covid_ru) = c("date_ym", "new_cases")
+covid_ru$date_ym = substr(covid_ru$date_ym, 1, 7 )
+```
+
+
+```{r}
+meta = subset(meta, sapply(as.character(meta$date), nchar) >= 7)
+meta$date_ym = substr(meta$date,1,7)
+month_table_vector = table(meta$date_ym)
+month_table_vector = c(month_table_vector, "2021-02"=0)
+```
+```{r}
+month_table = data.frame(date_ym = names(month_table_vector), samples = month_table_vector)
+month_table = merge(month_table, covid_ru, all.x = T)
+br = barplot(month_table$new_cases/10000, ylim = c(0,200), col = "gray80", las = 2, names.arg = month_table$date_ym); lines(x = br, month_table$samples, type = "l", col = "dodgerblue4", lwd = 3); points(x = br, month_table$samples,  col = "black", pch = 18, cex = 0.8); legend("topright",c("new COVID cases in Russia", "collected samples"), fill = c("gray80","dodgerblue4"),bty='n')
+```
+## add cities
+
+
+```{r}
+library("reshape2")
+colnames(meta)
+month_city = dcast(meta, "date_ym ~ city")
+month_city = as.matrix(month_city)
+month = month_city[,1]
+rownames(month_city) = month
+month_city = month_city[,-1]
+png("../../RESULTS/lineage_month.png",  type="cairo", width = 20, height = 15, res=300, units = "cm")
+
+barplot(t(as.matrix(month_city)), ylim = c(0,200),  las = 2,col=c("brown", 
+         "orange", "seagreen", "royalblue"), border = NA); lines(x = br, month_table$new_cases/10000, type = "l", col = "black", lwd = 3); points(x = br, month_table$new_cases/10000,  col = "gray50", pch = 18, cex = 0.8); legend("topright",c("new cases in Russia", colnames(month_city)), fill = c("black","brown", "orange", "seagreen", "royalblue"),bty='n')
+dev.off()
+```
+
