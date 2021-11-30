@@ -24,13 +24,6 @@ taxa <- taxa[colnames(seqtab),]
 taxa$Root<- NULL 
 tree <- read.tree('../DATA/SPAIN/placed_seqs.tre')
 
-meta_cov_spain <- read_delim("../DATA/SPAIN/meta.tsv", 
-    "\t", escape_double = FALSE, trim_ws = TRUE)
-meta_cov_spain <- as.data.frame(meta_cov_spain)
-row.names(meta_cov_spain) <- meta_cov_spain$Run
-meta_cov_spain$country <- 'Spain'
-meta_cov_spain$city <- 'Spain'
-
 
 meta_j <- read.delim("../DATA/covid_all_meta.csv", sep=',')
 rownames(meta_j) <- meta_j$mgx_specimen
