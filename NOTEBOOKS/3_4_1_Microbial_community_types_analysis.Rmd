@@ -1,0 +1,587 @@
+```{r}
+library(reshape2)
+library(phyloseq)
+library(microbiome)
+library(pheatmap)
+library(speedyseq)
+library(readr)
+library(dplyr)
+library(gridExtra)
+library(grid)
+library(ggplot2)
+library(DirichletMultinomial)
+library(ape)
+
+source('helpers.R')
+```
+
+# Data Loading
+## Metadata
+```{r}
+seqtab <- readRDS('../DATA/SPAIN/seqtab.rds') 
+taxa <- read.csv('../DATA/SPAIN/idtaxa.tsv', sep = '\t',row.names = 1)
+taxa <- taxa[colnames(seqtab),]
+taxa$Root<- NULL 
+tree <- read.tree('../DATA/SPAIN/placed_seqs.tre')
+
+meta_cov_spain <- read_delim("../DATA/SPAIN/meta.tsv", 
+    "\t", escape_double = FALSE, trim_ws = TRUE)
+meta_cov_spain <- as.data.frame(meta_cov_spain)
+row.names(meta_cov_spain) <- meta_cov_spain$Run
+meta_cov_spain$country <- 'Spain'
+meta_cov_spain$city <- 'Spain'
+
+
+meta_j <- read.delim("../DATA/covid_all_meta.csv", sep=',')
+rownames(meta_j) <- meta_j$mgx_specimen
+```
+
+## Counts, taxonomy, tree and Phyloseq construction
+```{r}
+
+
+ps <- phyloseq(otu_table(as.matrix(seqtab), taxa_are_rows=FALSE),
+               sample_data(as.data.frame(meta_j)),
+               tax_table(as.matrix(taxa))
+               ,phy_tree(tree)
+               )
+# rownames(ps@sam_data)
+ps
+
+sample_data(ps)$city[is.na(sample_data(ps)$city)] <- 'Alicante'
+
+# saveRDS(ps, '../../DATA/DEBLUR_FHM_SPAIN/ps.rds')
+
+taxas <- core_members(ps, detection = 1, prevalence = 1/100)
+# taxas_high <- core_members(ps_obj, detection = 1, prevalence = 15/100)
+# taxas <- setdiff(taxas, taxas_high)
+ps <- prune_taxa(taxas, ps)
+
+ps <- prune_samples(sample_sums(ps) > 1000, ps)
+# ps <- filter_taxa(ps, function(x) sum(x) > 1, TRUE)
+
+ps
+# 
+# ps <- prune_samples(as.vector(sample_data(ps)[,c('dataset')] != 'Vir'), ps)
+# ps
+
+# saveRDS(ps, '~/pd.rds')
+```
+
+```{r}
+ps_genus <- speedyseq::tax_glom(ps, 'Genus', NArm = T)
+ps_genus
+ps_tip <- speedyseq::tip_glom(ps, h=0.2)
+ps_tip
+```
+
+# Heatmap
+```{r, fig.height=17, fig.width=50}
+ps_obj <- ps_tip
+ps_obj <- prune_samples(sample_sums(ps_obj) > 1000, ps_obj)
+taxas <- core_members(ps_obj, detection = 1, prevalence = 10/100)
+ps_obj <- prune_taxa(taxas, ps_obj)
+
+ps_obj <- microbiome::transform(ps_obj, "clr")
+
+taxa_name_func <- function(x) {paste0(x['ASV'], '__',x['Phylum'],  '.g__' , gsub('/', '', gsub("-", "", x['Genus'])))}
+# count_mtrx <- as(otu_table(ps_obj), 'matrix')
+
+
+
+# count_mtrx <- log(count_mtrx+0.001)
+count_mtrx <- prepare_count_table(ps_obj, taxa_name_func)
+ps_meta <- as(sample_data(ps_obj), 'data.frame')
+
+
+cols_of_interest =c('country')
+
+
+
+meta_for_heatmap <- ps_meta[, (names(ps_meta) %in% cols_of_interest)]
+# 
+annotation_colors = list(
+  country = c('Russia' = 'blue', 'Spain' = 'yellow'),
+  CommunityType = c('1'='green','2'='red','3'='blue','4'='grey','5'='purple','6'='orange', '7'='black', '8'='brown', '9'='cyan'),
+  city=c("Moscow" ='red',   "NNovgorod" = 'blue', "Irkutsk" = 'green' ,  "Kazan" = 'pink', 'Spain' = 'yellow'   ),
+  Severity = c('A'='green','B'='yellow','C'='red','D'='black')
+)
+
+cc <- as.data.frame(count_mtrx)
+ordered_counts <- count_mtrx
+# ordered_counts <- count_mtrx[order(  meta_for_heatmap$CommunityType,
+#                                      # meta_for_heatmap$KT,
+#                                      cc$ASV7__Firmicutes.g__Staphylococcus,
+#                                      cc$ASV2__Bacteroidota.g__Prevotella),]
+# 
+# # reorder with hclust 
+# # https://rdrr.io/cran/textshape/src/R/cluster_matrix.R
+# hc2  <- stats::hclust(stats::dist(ordered_counts), method = 'ward.D2')
+# ordered_counts <- ordered_counts[hc2$order,]
+
+
+sub_matrixes <- list()
+i = 1
+for (val in unique(meta_for_heatmap$CommunityType)) {
+  sub_counts <- ordered_counts[meta_for_heatmap$CommunityType == val,]
+  
+  hc2  <- stats::hclust(stats::dist(sub_counts), method = 'ward.D2')
+  sub_counts <- sub_counts[hc2$order,]
+  
+  sub_matrixes[[i]] <- sub_counts
+  
+  i = i + 1
+}
+ordered_counts <- do.call(rbind, sub_matrixes)
+
+# Heatmap
+p <- pheatmap( t(ordered_counts), cluster_rows = T, 
+          cluster_cols = F, 
+          annotation_col = meta_for_heatmap,
+          annotation_colors = annotation_colors,
+          # col= hmcols, 
+          # breaks = bk,
+          main='',
+          silent=F,
+          show_rownames = T,
+          show_colnames = T)
+
+# ggsave("~/heatmap_covid.pdf", p, dpi=320, width=30, height = 35, units='in')
+
+```
+
+
+
+```{r, fig.width=10, fig.height=10}
+ps_obj <- ps_tip
+
+# ps_obj <- prune_samples(sample_sums(ps_obj) > 500, ps_obj)
+# sample_data(ps_obj)$CommunityType <- as.factor(asss)
+
+
+ps_obj
+
+taxas <- core_members(ps_obj, detection = 1, prevalence = 10/100)
+# taxas_high <- core_members(ps_obj, detection = 1, prevalence = 15/100)
+# taxas <- setdiff(taxas, taxas_high)
+ps_obj <- prune_taxa(taxas, ps_obj)
+ps_obj <- prune_samples(sample_sums(ps_obj) > 1000, ps_obj)
+
+ps_obj <- microbiome::transform(ps_obj, "compositional")
+
+dist = phyloseq::distance(ps_obj, method="bray")
+ordination = ordinate(ps_obj, method="PCoA", distance=dist)
+
+plot_ordination(ps_obj, ordination, color='city', shape='country') + theme(aspect.ratio=1) + ggtitle('NMDS bray')  + geom_point(size=3)  
+# + geom_text(aes( label = mgx_specimen), size = 3, vjust = 1.5, alpha=0.3)
+```
+
+
+# DMM
+```{r}
+ps_obj <- ps_genus
+taxas <- core_members(ps_obj, detection = 5, prevalence = 10/100)
+ps_obj <- prune_taxa(taxas, ps_obj)
+
+# Pick the OTU count matrix
+# and convert it into samples x taxa format
+dat <- abundances(ps_obj)
+count <- as.matrix(t(dat))
+ps_obj
+cnts <- log10(colSums(count))
+densityplot(cnts, xlim=range(cnts), xlab="Taxon representation (log 10 count)")
+```
+
+
+### Fit model
+```{r}
+fit <- mclapply(1:10, dmn, count=count, verbose=TRUE, mc.cores=8)
+# saveRDS(fit, '../../RESULTS/dmm_fit_genus_naRmT_prev_0.1__detection5_1to10.rds')
+fit <- readRDS('../../RESULTS/dmm_fit_genus_naRmT_prev_0.1__detection5_1to10.rds')
+```
+
+```{r}
+colors <- c("Laplace" = "darkred", "Aikaike Information Criterion" = "steelblue", "Bayesian Information Criterion" = "green")
+lplc <- sapply(fit, laplace) # AIC / BIC / Laplace
+aic  <- sapply(fit, AIC) # AIC / BIC / Laplace
+bic  <- sapply(fit, BIC) # AIC / BIC / Laplace
+df <- do.call(rbind, Map(data.frame, lplc=lplc, aic=aic, bic=bic, num=c(1:length(lplc))))
+p_fit <- ggplot(data=df, aes(x = num)) +
+  geom_line(aes(y = lplc, color = "Laplace")) + 
+  geom_point(aes(y = lplc)) +
+  geom_line(aes(y = aic, color="Aikaike Information Criterion"), linetype="twodash") +
+  geom_point(aes(y = aic)) +
+  geom_line(aes(y = bic, color="Bayesian Information Criterion"), linetype="twodash") +
+  geom_point(aes(y = bic)) +
+  ggtitle('C - Model Fit') +
+    labs(x = "Number of Dirichlet Components",
+         y = "Model Fit",
+         color = "Fit Metric") +
+    scale_color_manual(values = colors) + 
+    theme(plot.title = element_text(size = 20, face = "bold"), 
+          legend.text=element_text(size=16),
+          legend.title=element_text(size=15),
+          legend.key.size = unit(1, 'cm'))
+print(p_fit)
+```
+
+
+
+### Add cluster info to metadata
+```{r}
+
+best <- fit[[which.min(unlist(lplc))]]
+best <- fit[[6]]
+mixturewt(best)
+ass <- apply(mixture(best), 1, which.max)
+
+fitB <- fitted(best)
+asss <- mixture(best, assign = TRUE)
+sample_data(ps_genus)$entero <- as.factor(asss)
+table(asss)
+# saveRDS(ps_obj, paste(wd_path,'ps.rds'))
+```
+
+### Top Drivers
+
+```{r}
+# tt <- as.data.frame(tax_table(ps_obj))
+tt <- taxa
+tt$OTU <- row.names(tt)
+tt$plot <- paste(tt$OTU, tt$Family, tt$Genus, sep = '__')
+table(tt$Phylum)
+```
+```{r}
+  d <- melt(fitted(best))
+  colnames(d) <- c("OTU", "cluster", "value")
+
+d <- subset(d, cluster == 2) %>%
+     # Arrange OTUs by assignment strength
+     arrange(value) %>%
+     mutate(OTU = factor(OTU, levels = unique(OTU)))   %>%
+    filter(abs(value) > quantile(abs(value), 0.8))  
+mm <- merge(tt, d, by = 'OTU')
+mm <- mm[order(-mm$value),]
+mm
+```
+
+
+```{r, fig.width=30,fig.height=22}
+
+
+pp <- list()
+for (k in seq(ncol(fitted(best)))) {
+  d <- melt(fitted(best))
+  colnames(d) <- c("OTU", "cluster", "value")
+
+  d <- subset(d, cluster == k) %>%
+     # Arrange OTUs by assignment strength
+     arrange(value) %>%
+     mutate(OTU = factor(OTU, levels = unique(OTU)))   %>%
+    filter(abs(value) > quantile(abs(value), 0.9))  
+  
+  mm <- merge(tt, d, by = 'OTU')
+  mm <- mm[order(-mm$value),]
+  
+  p<-ggplot(data=mm, aes(x=reorder(plot, value), y=value)) +
+  geom_bar(stat="identity") +theme_minimal() + ggtitle(paste('Community type: ',k))+ 
+    theme(legend.position="top",text = element_text(size=30))+ coord_flip() 
+  # + scale_fill_manual("legend", values = c("Firmicutes" = "#2F9DA3", 
+  #                                                                                     "Bacteroidota" = "orange", 
+  #                                                                                     "Actinobacteriota" = "#14BA30",  
+  #                                                                                     "Verrucomicrobiota" = "#D122EC",
+  #                                                                                     "Proteobacteria"="#90FCE7",
+  #                                                                                     "Euryarchaeota" = '#E22114',
+  #                                                                                     "unclassified_Bacteria" = 'black',
+  #                                                                                     "Desulfobacterota" = "#FBB6CF",
+  #                                                                                     "NA" = 'black'))
+  # print(p)
+  pp[[k]] <- p
+  # ggsave(plot=p, path='./tip', filename=paste("top_drivers: ", k, '.pdf'), device='pdf', width = 10, height = 13)
+}
+# pp <-do.call(grid.arrange,pp)
+grid.arrange(grobs=pp)
+pp
+ggsave(plot=pp, path="", filename="top_drivers.pdf", device='pdf', width = 20, height = 35)
+# heatmapdmn
+```
+
+### Enterotype diversity
+```{r}
+ps_obj <- ps_genus
+sample_data(ps_obj)$CommunityType <- as.factor(asss)
+plot_richness(ps_obj, x="CommunityType", measures=c( "Shannon")) + geom_boxplot() + ggtitle('Shannon diversity')+ theme(
+  plot.title = element_text(hjust = 0.5, size = 15),
+  axis.text.x = element_text(color = "black", size = 15, angle = 360, hjust = .5, vjust = .5, face = "plain"),axis.text.y = element_text(color = "black", size = 15, angle = 360, hjust = .5, vjust = .5, face = "plain"),
+  axis.title.x = element_text(color = "black", size = 15, angle = 0, hjust = .5, vjust = 0, face = "plain"),axis.title.y = element_text(color = "black", size = 15, angle = 90, hjust = .5, vjust = .5, face = "plain"))
+
+```
+
+
+```{r, fig.width=9, fig.height=16}
+coeff_mtrx <- fitted(best)
+
+coeff_mtrx_m <- merge(coeff_mtrx, tt, by = 0)
+rownames(coeff_mtrx_m) <- coeff_mtrx_m$plot
+
+coeff_mtrx_m <- coeff_mtrx_m[c('V1','V2','V3', 'V4', 'V5', 'V6')]
+
+pheatmap(log(coeff_mtrx_m+0.1), cluster_cols = F)
+```
+
+
+
+
+
+
+
+### PCA with density
+```{r, fig.width=10, fig.height=10}
+ps_obj <- ps_genus
+sample_data(ps_obj)$CommunityType <- as.factor(asss)
+
+# saveRDS(ps_obj, '../../RESULTS/ps_genus_narmT.rds')
+
+taxas <- core_members(ps_obj, detection = 5, prevalence = 10/100)
+# taxas_high <- core_members(ps_obj, detection = 1, prevalence = 15/100)
+# taxas <- setdiff(taxas, taxas_high)
+ps_obj <- prune_taxa(taxas, ps_obj)
+
+# ps_obj <- microbiome::transform(ps_obj, "compositional")
+
+dist = phyloseq::distance(ps_obj, method="unifrac")
+
+ordination = ordinate(ps_obj, method="PCoA", distance=dist)
+ord_plot <- plot_ordination(ps_obj, ordination, color='city', shape='CommunityType') + theme(aspect.ratio=1) + ggtitle('PcoA unifrac')  + geom_point(size=3,alpha=0.8)+ scale_color_manual(values = c( "cyan", "brown", "orange", "seagreen", "royalblue"))
+ord_plot
+# + stat_ellipse(type = "t") 
+# + geom_text(aes(label = ), size = 3, vjust = 1.5)
+
+```
+```{r, fig.width=10, fig.height=10}
+ps_obj <- ps_genus
+sample_data(ps_obj)$CommunityType <- as.factor(asss)
+
+# saveRDS(ps_obj, '../../RESULTS/ps_genus_narmT.rds')
+
+taxas <- core_members(ps_obj, detection = 5, prevalence = 10/100)
+# taxas_high <- core_members(ps_obj, detection = 1, prevalence = 15/100)
+# taxas <- setdiff(taxas, taxas_high)
+ps_obj <- prune_taxa(taxas, ps_obj)
+
+ps_obj <- microbiome::transform(ps_obj, "compositional")
+
+dist = phyloseq::distance(ps_obj, method="bray")
+
+ordination = ordinate(ps_obj, method="NMDS", distance=dist)
+ord_plot <- plot_ordination(ps_obj, ordination, color='city', shape='CommunityType') + theme(aspect.ratio=1) + ggtitle('NMDS bray')  + geom_point(size=3,alpha=0.8)+ scale_color_manual(values = c( "cyan", "brown", "orange", "seagreen", "royalblue"))
+ord_plot
+# + stat_ellipse(type = "t") 
+# + geom_text(aes(label = ), size = 3, vjust = 1.5)
+
+```
+
+
+
+```{r, fig.width=10, fig.height=10}
+dist = phyloseq::distance(ps_obj, method="unifrac")
+ordination = ordinate(ps_obj, method="PCoA", distance=dist)
+plot_ordination(ps_obj, ordination,  color='entero', shape='city') + theme(aspect.ratio=1) + ggtitle('PCoA unifrac')  + geom_point(size=3)
+```
+
+```{r, fig.width=10, fig.height=10}
+ps_objj <- microbiome::transform(ps_obj, "compositional")
+
+dist = phyloseq::distance(ps_objj, method="bray")
+ordination = ordinate(ps_objj, method="NMDS", distance=dist)
+plot_ordination(ps_objj, ordination, color='entero', shape='city') + theme(aspect.ratio=1) + ggtitle('NMDS bray')  + geom_point(size=3)
+```
+
+
+```{r, fig.width=10, fig.height=10}
+dist = phyloseq::distance(ps_objj, method="bray")
+ordination = ordinate(ps_objj, method="PCoA", distance=dist)
+plot_ordination(ps_objj, ordination, color='entero', shape='city') + theme(aspect.ratio=1) + ggtitle('PCoA bray')  + geom_point(size=3)
+```
+```{r}
+ps_obj <- ps_tip
+
+ps_obj
+sample_data(ps_obj)$entero <- as.factor(asss)
+
+taxas <- core_members(ps_obj, detection = 1, prevalence = 10/100)
+# taxas_high <- core_members(ps_obj, detection = 1, prevalence = 15/100)
+# taxas <- setdiff(taxas, taxas_high)
+ps_obj <- prune_taxa(taxas, ps_obj)
+
+ps_objj <- microbiome::transform(ps_obj, "compositional")
+
+
+dist = phyloseq::distance(ps_obj, method="jaccard",binary=TRUE)
+ordination = ordinate(ps_obj, method="MDS", distance=dist)
+plot_ordination(ps_obj, ordination, color='entero', shape='city') + theme(aspect.ratio=1) + ggtitle('NMDS jaccard')  + geom_point(size=3)
+
+dist = phyloseq::distance(ps_objj, method="jaccard",binary=TRUE)
+ordination = ordinate(ps_objj, method="PCoA", distance=dist)
+plot_ordination(ps_objj, ordination, color='entero', shape='city') + theme(aspect.ratio=1) + ggtitle('PCoA jaccard')  + geom_point(size=3)
+```
+
+
+
+```{r, fig.height=12, fig.width=16}
+
+ps_genus <- speedyseq::tax_glom(ps, 'Genus', NArm = T)
+ps_genus
+
+ps_obj <- ps_genus
+sample_data(ps_obj)$CommunityType <- as.factor(asss)
+# ps_obj <- prune_samples(sample_sums(ps_obj) > 1000, ps_obj)
+ps_obj
+
+taxas <- core_members(ps_obj, detection = 1, prevalence = 30/100)
+# taxas_high <- core_members(ps_obj, detection = 1, prevalence = 15/100)
+# taxas <- setdiff(taxas, taxas_high)
+ps_obj <- prune_taxa(taxas, ps_obj)
+ps_obj <- prune_samples(sample_sums(ps_obj) > 1000, ps_obj)
+ps_obj <- microbiome::transform(ps_obj, "clr")
+ps_obj
+
+taxa_name_func <- function(x) {paste0(x['ASV'], '__',x['Phylum'],  '.g__' , gsub('/', '', gsub("-", "", x['Genus'])))}
+
+taxa_name_func <- function(x) { gsub("-", "", x['Genus'])}
+# count_mtrx <- as(otu_table(ps_obj), 'matrix')
+
+
+# count_mtrx <- log(count_mtrx+0.001)
+count_mtrx <- prepare_count_table(ps_obj, taxa_name_func)
+ps_meta <- as(sample_data(ps_obj), 'data.frame')
+
+cols_of_interest =c('center',  'CommunityType')
+
+meta_for_heatmap <- ps_meta[, (names(ps_meta) %in% cols_of_interest)]
+# 
+annotation_colors = list(
+  dataset = c('Vir' = 'pink', 'covid_Spain' = 'blue', 'fhm'='green'),
+  title = c('nasopharyngeal_control'= 'green', 'nasopharyngeal_InfluenzaA' = 'red',
+       'nasopharyngeal_InfluenzaB' = 'red', 'nasopharyngeal_Metapneumovirus' = 'brown',
+       'nasopharyngeal_Rhinovirus' = 'brown', 'nasopharyngeal_VRS' = 'brown'), 
+  Амбулаторный.или.стационарный.пациент. = c('Амбулаторный'='green', 'Стационарный'='red'),
+  group = c('healthy'='green', 'Influenza'='purple','VIR'='brown','covid'='blue','covid_hosp'='black', 'covid_amb'='grey')
+  # city = 
+)
+
+ordered_counts <- count_mtrx[order(  meta_for_heatmap$CommunityType),]
+
+# Heatmap
+p <- pheatmap( t(ordered_counts), cluster_rows = T, 
+          cluster_cols = F, 
+          annotation_col = meta_for_heatmap,
+          annotation_colors = annotation_colors,
+          # col= hmcols, 
+          # breaks = bk,
+          main='',
+          silent=F,
+          show_rownames = T,
+          show_colnames = F,
+          fontsize=20)
+
+# ggsave("../../heatmap_covid.pdf", p, dpi=300, width=24, height = 32, units='in')
+
+```
+
+
+```{r}
+library(DTMM)
+```
+
+
+```{r, fig.width=18, fig.height=9}
+ps_obj <- ps_genus
+sample_data(ps_obj)$entero <- as.factor(asss)
+
+# ps_obj <- speedyseq::tax_glom(pscur, taxrank='Genus', NArm = FALSE)
+# ps_obj <- prune_samples(as.vector(sample_data(ps_obj)[,c('s_sec')] != 'Narcology'), ps_obj)
+
+taxas <- core_members(ps_obj, detection = 1, prevalence = 10/100)
+ps_obj <- prune_taxa(taxas, ps_obj)
+
+
+
+ps_meta <- as(sample_data(ps_obj), 'data.frame')
+
+# 'group', 'dataset', 'batch', 'Host_disease', 'Город', 'agegroup', 'Степень.тяжести.пневмонии.по.КТ','Потребность.в.дополнительном.О2'
+eob <- ggplot(ps_meta, aes(x=entero,fill=group))+
+  geom_bar(position="fill") + labs(title="") + theme(axis.text.x=element_text(angle = -45, hjust = 0)) + ggtitle('Группа')
+
+
+echol <- ggplot(ps_meta, aes(x=entero,fill=dataset))+
+  geom_bar(position="fill") + labs(title="") + theme(axis.text.x=element_text(angle = -45, hjust = 0))+ ggtitle('dataset')
+
+
+eed <- ggplot(ps_meta, aes(x=entero,fill=batch))+
+  geom_bar(position="fill") + labs(title="") + theme(axis.text.x=element_text(angle = -45, hjust = 0))+ ggtitle('batch')
+
+
+# clean <- ps_meta[ps_meta$b_c1 != '',]
+# clean$b_c1 <- factor(clean$b_c1, levels = c("Poor", "Fair", "Good", "Very good", "Excellent"))
+
+esrh <- ggplot(ps_meta, aes(x=entero,fill=Город))+
+  geom_bar(position="fill") + labs(title="") + theme(axis.text.x=element_text(angle = -45, hjust = 0)) + ggtitle('Город')
+
+
+eage <- ggplot(ps_meta, aes(x=entero,fill=agegroup))+
+  geom_bar(position="fill") + labs(title="") + theme(axis.text.x=element_text(angle = -45, hjust = 0)) + ggtitle('Age')
+
+
+eage2 <- ggplot(ps_meta, aes(x=entero,fill=Степень.тяжести.пневмонии.по.КТ))+
+  geom_bar(position="fill") + labs(title="") + theme(axis.text.x=element_text(angle = -45, hjust = 0)) + ggtitle('КТ')
+
+
+emar <- ggplot(ps_meta, aes(x=entero,fill=Потребность.в.дополнительном.О2))+
+  geom_bar(position="fill") + labs(title="") + theme(axis.text.x=element_text(angle = -45, hjust = 0)) + ggtitle('Кислород')
+
+
+
+
+# p <- grid.arrange(ebatch, ealc, esex, eveg, esmoke, ehyp, 
+#                   eob,echol,eed,esrh,eage,emar, nrow = 3)
+
+p <- grid.arrange( eob, echol, eed,  eage2, emar, nrow = 3)
+
+# ggsave(plot=p, path=wd_path, filename='features_by_enterotypes.pdf', device='pdf', width = 20, height = 25)
+p
+```
+
+
+
+
+
+
+
+```{r}
+sample_data(ps_obj)$entero <- as.factor(asss)
+
+dd <- as(sample_data(ps_obj), 'matrix')
+dd <- sample_data(ps_obj)
+
+# row.names(dd) <- dd
+
+meta_for_heatmap <- dd[, (names(dd) %in% c('mgx_specimen', 'entero'))]
+
+write.table(as(meta_for_heatmap, 'matrix'), '../../RESULTS/mgx_cluster_deblur_genus_narmT_prev0.1det5_6_tmp.tsv', quote = F, row.names = F)
+```
+
+
+
+
+
+
+### plot beeswarm of lung damage
+```{r}
+library(beeswarm)
+meta_and_type.= subset(meta_and_type, complete.cases(rbind(meta_and_type$damage,meta_and_type$respirotype)))
+meta_and_type. =  data.frame(damage = meta_and_type$damage, respirotype = meta_and_type$respirotype)
+meta_and_type. = meta_and_type.[complete.cases(meta_and_type.),]
+bxplot(damage ~ respirotype, meta_and_type., frame=F,probs = seq(0.25, 0.75, by = 0.25), col = "dodgerblue2",ylab = "lung damage", xlab = "respirotype",cex.lab = 1.6); beeswarm(damage ~ respirotype,meta_and_type., pch=19, cex = 0.8, col=rgb(0.1,0.1,0.1,0.7),add=T)
+```
+
