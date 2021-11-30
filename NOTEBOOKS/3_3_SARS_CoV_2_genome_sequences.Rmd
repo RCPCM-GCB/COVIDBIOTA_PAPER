@@ -1,0 +1,23 @@
+### get the data
+```{r}
+meta = read.delim("../DATA/metadata_eng_lineage.tsv")
+meta$sample = rownames(meta16s)
+```
+
+
+```{r}
+table(meta$lineage)
+```
+
+
+### run Fisher test
+```{r}
+library(reshape2)
+lin_city_long = data.frame(lineage = meta$lineage, city = meta$city)
+lin_city_long = lin_city_long[complete.cases(lin_city_long),]
+lin_city_wide = dcast(lin_city_long, city ~ lineage)
+
+rownames(lin_city_wide) = lin_city_wide$city
+lin_city_wide = lin_city_wide[,-1]
+fisher.test(lin_city_wide, simulate.p.value=TRUE, B=1e5)
+```
