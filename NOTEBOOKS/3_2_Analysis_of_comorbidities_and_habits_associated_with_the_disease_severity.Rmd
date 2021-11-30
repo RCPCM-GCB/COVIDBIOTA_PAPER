@@ -1,0 +1,19 @@
+### get the data
+```{r}
+meta16s = read.delim("../DATA/metadata_eng_lineage.tsv")
+meta16s$sample = rownames(meta16s)
+
+colnames(meta16s)
+```
+
+### linear model analysis 
+## comorbidities
+```{r}
+lm_result = lm(damage ~ COPD + tuberculosis + chronic.heart.failure + coronary.artery.disease + diabetes + arthritis + asthma + hypertension, meta16s)
+summary(lm_result)
+```
+## age and sex
+```{r}
+lm_result = lm(damage ~ age + sex, meta16s)
+summary(lm_result)
+```
